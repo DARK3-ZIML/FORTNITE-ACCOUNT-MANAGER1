@@ -1,0 +1,356 @@
+!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fortnite Account Manager</title>
+<style>
+:root {
+  font-family: Arial, sans-serif;
+  color-scheme: dark;
+}
+body {
+  margin: 0;
+  padding: 20px;
+  background: #10131c;
+  color: #f4f6ff;
+}
+main {
+  max-width: 1000px;
+  margin: auto;
+}
+h1 { color: #9b8cff; }
+.panel, .account {
+  background: #1b2030;
+  border: 1px solid #343b52;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 12px 0;
+}
+input, button, select {
+  padding: 11px;
+  border-radius: 7px;
+  border: 1px solid #454d66;
+  margin: 4px;
+}
+input, select {
+  background: #111522;
+  color: white;
+  max-width: 100%;
+}
+button {
+  cursor: pointer;
+  background: #7564ee;
+  color: white;
+  border: 0;
+  font-weight: bold;
+}
+button:hover { opacity: .85; }
+.delete { background: #b94458; }
+.muted { color: #aab2ca; }
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.timer {
+  font-size: 24px;
+  font-weight: bold;
+  color: #a99cff;
+}
+.progress {
+  height: 7px;
+  background: #343b52;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.progress div {
+  height: 100%;
+  background: #8d7cff;
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>🎮 Fortnite Account Manager</h1>
+  <p class="muted">Comptes · Emplacements · Machines · Minuteurs</p>
+
+  <section class="panel">
+    <h2>Ajouter un compte</h2>
+    <form id="addForm" class="row">
+      <input id="accountName" placeholder="Nom du compte" required maxlength="80">
+      <button type="submit">+ Créer le compte</button>
+    </form>
+    <p id="message" class="muted"></p>
+  </section>
+
+  <section class="panel">
+    <h2>📊 Tableau de bord</h2>
+    <div id="stats"></div>
+    <h3>➡️ Prochain compte conseillé</h3>
+    <div id="nextAccount">Ajoute un compte pour commencer.</div>
+  </section>
+
+  <div class="row">
+    <h2>Mes comptes</h2>
+    <button id="exportBtn">Exporter la sauvegarde</button>
+    <label>
+      <input type="file" id="importFile" accept=".json" hidden>
+      <button type="button" id="importBtn">Importer</button>
+    </label>
+  </div>
+
+  <section id="accounts"></section>
+</main>
+
+<script>
+const STORAGE_KEY = "fortnite-manager-v1";
+let accounts = [];
+try {
+  accounts = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  if (!Array.isArray(accounts)) accounts = [];
+} catch {
+  accounts = [];
+}
+
+const $ = id => document.getElementById(id);
+const uid = () => Date.now().toString(36) +
+  Math.random().toString(36).slice(2, 9);
+
+function save() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
+    $("message").textContent = "Sauvegarde locale enregistrée.";
+  } catch {
+    $("message").textContent =
+      "Impossible de sauvegarder : vérifie les paramètres du navigateur.";
+  }
+}
+
+function remaining(machine) {
+  return Math.max(0, machine.endAt - Date.now());
+}
+
+function formatTime(ms) {
+  const total = Math.ceil(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return [h, m, s].map(n => String(n).padStart(2, "0")).join(":");
+}
+
+function addAccount(name) {
+  name = name.trim();
+  if (!name) return;
+
+  accounts.push({
+    id: uid(),
+    name,
+    slots: 0,
+    machines: []
+  });
+
+  save();
+  render();
+}
+
+$("addForm").addEventListener("submit", event => {
+  event.preventDefault();
+  const name = $("accountName").value;
+  if (!name.trim()) {
+    $("message").textContent = "Entre un nom de compte.";
+    return;
+  }
+  addAccount(name);
+  $("accountName").value = "";
+  $("accountName").focus();
+});
+
+function changeSlots(id, amount) {
+  const a = accounts.find(x => x.id === id);
+  if (!a) return;
+  a.slots = Math.max(0, Math.min(10, a.slots + amount));
+  save();
+  render();
+}
+
+function startMachine(id) {
+  const a = accounts.find(x => x.id === id);
+  if (!a) return;
+
+  a.machines.push({
+    id: uid(),
+    endAt: Date.now() + 2 * 60 * 60 * 1000
+  });
+  save();
+  render();
+}
+
+function removeMachine(accountId, machineId) {
+  const a = accounts.find(x => x.id === accountId);
+  if (!a) return;
+  a.machines = a.machines.filter(m => m.id !== machineId);
+  save();
+  render();
+}
+
+function deleteAccount(id) {
+  const a = accounts.find(x => x.id === id);
+  if (!a) return;
+  if (!confirm("Supprimer le compte « " + a.name + " » ?")) return;
+  accounts = accounts.filter(x => x.id !== id);
+  save();
+  render();
+}
+
+function render() {
+  const active = accounts.reduce(
+    (sum, a) => sum + a.machines.filter(m => remaining(m) > 0).length, 0
+  );
+  const slots = accounts.reduce((sum, a) => sum + a.slots, 0);
+  const ready = accounts.filter(a => a.slots < 10).length;
+
+  $("stats").innerHTML = `
+    <p>👤 Comptes : <b>${accounts.length}</b></p>
+    <p>🎯 Emplacements utilisés : <b>${slots}</b> / ${accounts.length * 10}</p>
+    <p>⚙️ Machines en cours : <b>${active}</b></p>
+    <p>✅ Comptes avec de la place : <b>${ready}</b></p>
+  `;
+
+  const candidate = accounts
+    .filter(a => a.slots < 10)
+    .sort((a, b) => a.slots - b.slots)[0];
+
+  $("nextAccount").textContent = candidate
+    ? candidate.name + " — " + candidate.slots + "/10 emplacements utilisés"
+    : accounts.length
+      ? "Tous les comptes sont à 10/10."
+      : "Ajoute un compte pour commencer.";
+
+  const root = $("accounts");
+  root.replaceChildren();
+
+  if (!accounts.length) {
+    root.innerHTML = '<p class="muted">Aucun compte. Ajoute ton premier compte ci-dessus.</p>';
+    return;
+  }
+
+  for (const a of accounts) {
+    const card = document.createElement("article");
+    card.className = "account";
+
+    const heading = document.createElement("h3");
+    heading.textContent = a.name;
+    card.appendChild(heading);
+
+    const count = document.createElement("p");
+    count.textContent = `Emplacements : ${a.slots}/10`;
+    card.appendChild(count);
+
+    const bar = document.createElement("div");
+    bar.className = "progress";
+    const fill = document.createElement("div");
+    fill.style.width = (a.slots * 10) + "%";
+    bar.appendChild(fill);
+    card.appendChild(bar);
+
+    const slotButtons = document.createElement("div");
+    slotButtons.className = "row";
+    addButton(slotButtons, "− Emplacement", () => changeSlots(a.id, -1));
+    addButton(slotButtons, "+ Emplacement", () => changeSlots(a.id, 1));
+    addButton(slotButtons, "▶ Lancer machine (2 h)", () => startMachine(a.id));
+    addButton(slotButtons, "Supprimer le compte", () => deleteAccount(a.id), "delete");
+    card.appendChild(slotButtons);
+
+    const machineTitle = document.createElement("h4");
+    machineTitle.textContent = "Machines";
+    card.appendChild(machineTitle);
+
+    if (!a.machines.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "Aucune machine lancée.";
+      card.appendChild(empty);
+    }
+
+    for (const m of a.machines) {
+      const line = document.createElement("div");
+      line.className = "row";
+
+      const time = document.createElement("span");
+      time.className = "timer";
+      time.dataset.end = m.endAt;
+      time.textContent = remaining(m) > 0
+        ? formatTime(remaining(m))
+        : "00:00:00 — Terminée";
+
+      const remove = document.createElement("button");
+      remove.className = "delete";
+      remove.textContent = "Retirer";
+      remove.addEventListener("click", () => removeMachine(a.id, m.id));
+
+      line.append(time, remove);
+      card.appendChild(line);
+    }
+
+    root.appendChild(card);
+  }
+}
+
+function addButton(parent, label, callback, className = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  if (className) button.className = className;
+  button.addEventListener("click", callback);
+  parent.appendChild(button);
+}
+
+function tick() {
+  document.querySelectorAll("[data-end]").forEach(el => {
+    const ms = Math.max(0, Number(el.dataset.end) - Date.now());
+    el.textContent = ms > 0
+      ? formatTime(ms)
+      : "00:00:00 — Terminée";
+  });
+}
+
+$("exportBtn").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(accounts, null, 2)], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "fortnite-comptes.json";
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+$("importBtn").addEventListener("click", () => $("importFile").click());
+
+$("importFile").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!Array.isArray(data)) throw new Error("Format invalide");
+    accounts = data.filter(a =>
+      a && typeof a.name === "string" &&
+      Number.isFinite(a.slots) && Array.isArray(a.machines)
+    );
+    save();
+    render();
+    $("message").textContent = "Sauvegarde importée.";
+  } catch {
+    $("message").textContent = "Fichier de sauvegarde invalide.";
+  }
+  event.target.value = "";
+});
+
+render();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
